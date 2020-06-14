@@ -1,10 +1,67 @@
 #version 460 core
-layout (local_size_x = 8, local_size_y = 8) in;
+layout (local_size_x = 1, local_size_y = 1) in;
 layout (rgba32f, binding = 0) uniform image2D texOut;
 
+uniform vec3 pos;
+uniform vec3 rayLU, rayLD, rayRD, rayRU;
+uniform ivec2 extent;
+
+uniform int nstars;
+uniform int nholes;
+
+uniform vec3 bgColor, holeColor, starColor;
+
+layout (std430, binding = 1) buffer Bodies {
+    vec4 bodies[];
+};
+
+float intersection(vec3 c, vec3 r, float R) {
+    float d = dot(r, c);
+    float del = d * d - dot(c, c) + R * R;
+    if (del < 0) return -1;
+
+    float best = -1;
+    float del_sqrt = sqrt(del);
+
+    float lam = d - del_sqrt;
+    if (lam >= 0 && (best < 0 || lam < best)) {
+        best = lam;
+    }
+
+    lam = d + del_sqrt;
+    if (lam >= 0 && (best < 0 || lam < best)) {
+        best = lam;
+    }
+
+    return best;
+}
+
 void main() {
-    vec4 color = vec4(1, 1, 0, 1);
     ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
 
-    imageStore(texOut, pix, color);
+    float x = float(pix.x) / float(extent.x);
+    float y = float(pix.y) / float(extent.y);
+    vec3 ray = rayLD + (rayRD - rayLD) * x + (rayLU - rayLD) * (1 - y);
+
+    vec3 p = ray;
+    vec3 r = normalize(ray - pos);
+
+    float best = -1;
+    vec3 color = bgColor;
+    for (int i = 0; i < nstars; ++i) {
+        float lam = intersection(bodies[i].xyz - p, r, bodies[i].w);
+        if (lam >= 0 && (best < 0 || lam < best)) {
+            best = lam;
+            color = starColor;
+        }
+    }
+    for (int i = nstars; i < nstars + nholes; ++i) {
+        float lam = intersection(bodies[i].xyz - p, r, bodies[i].w);
+        if (lam >= 0 && (best < 0 || lam < best)) {
+            best = lam;
+            color = holeColor;
+        }
+    }
+
+    imageStore(texOut, pix, vec4(color, 1));
 }

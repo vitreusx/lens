@@ -15,6 +15,14 @@ target_include_directories(obj
     INTERFACE
     OBJ-Loader/Source)
 
+add_library(stb)
+target_sources(stb
+    PRIVATE
+    src/stb_image_impl.cpp)
+target_include_directories(stb
+    PUBLIC
+    stb)
+
 add_executable(lens)
 target_sources(lens
     PRIVATE
@@ -27,11 +35,12 @@ target_sources(lens
     src/camera.h
     src/model.h
     src/random.h
-    src/texture.h)
+    src/texture.h
+    src/storage_buffer.h)
 
 target_link_libraries(lens
     PUBLIC
-    glfw glad glm obj)
+    glfw glad glm obj stb)
 
 set_target_properties(lens
     PROPERTIES

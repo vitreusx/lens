@@ -10,9 +10,6 @@ enum Movement {
 
 class Camera {
 private:
-    vec3 pos, front, up, right, worldUp;
-    float yaw, pitch, speed, sensitivity, zoom;
-
     void update() {
         vec3 f;
         f.x = cos(radians(yaw)) * cos(radians(pitch));
@@ -25,6 +22,9 @@ private:
     }
 
 public:
+    vec3 pos, front, up, right, worldUp;
+    float yaw, pitch, speed, sensitivity, zoom;
+
     Camera() {
         pos = vec3(0, 0, 0);
         front = vec3(0, 0, -1);

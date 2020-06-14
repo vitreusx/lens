@@ -11,6 +11,7 @@
 #include "model.h"
 #include "random.h"
 #include "texture.h"
+#include "storage_buffer.h"
 
 using namespace std;
 using namespace glm;
@@ -23,10 +24,11 @@ public:
     bool firstMouse = true;
     float priorX, priorY, priorTime;
     float dt;
-    bool which = true;
+    bool which = true, cursor = false;
 
     static void onMouseMove(GLFWwindow *window, double x, double y) {
         Base *self = (Base*)glfwGetWindowUserPointer(window);
+        if (self->cursor) return;
 
         if (self->firstMouse) {
             self->priorX = (float)x;
@@ -43,17 +45,32 @@ public:
 
     static void onMouseScroll(GLFWwindow *window, double dx, double dy) {
         Base *self = (Base*)glfwGetWindowUserPointer(window);
+        if (self->cursor) return;
+
         self->camera.onMouseScroll((float)dy);
     }
 
     static void onKeyPress(GLFWwindow *window, int key, int, int action, int) {
         Base *self = (Base*)glfwGetWindowUserPointer(window);
 
-        if (key == GLFW_KEY_RIGHT_CONTROL && action == GLFW_PRESS)
+        if (key == GLFW_KEY_F1 && action == GLFW_PRESS && !self->cursor)
             self->which = !self->which;
+
+        if (key == GLFW_KEY_F2 && action == GLFW_PRESS) {
+            self->cursor = !self->cursor;
+            if (self->cursor) {
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                self->firstMouse = true;
+            }
+            else {
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            }
+        }
     }
 
     void onInput() {
+        if (cursor) return;
+
         static const vector<pair<int, Movement>> mvmts = {
             { GLFW_KEY_W, Forward },
             { GLFW_KEY_A, Left },
@@ -100,7 +117,8 @@ public:
 
     Base() {
         glfwSetWindowUserPointer(window, this);
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        if (!cursor)
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
         glfwSetCursorPosCallback(window, onMouseMove);
         glfwSetScrollCallback(window, onMouseScroll);
@@ -183,6 +201,7 @@ private:
 
     Shader quadVs, quadFs, rayComp;
     Program quadProg, rayProg;
+    StorageBuffer bodiesBuffer;
 
     vec3 bgColor;
 
@@ -204,6 +223,10 @@ public:
         quad = Model("res/quad.obj");
 
         bgColor = vec3(0.1);
+        glUseProgram(rayProg);
+        rayProg.set("bgColor", bgColor);
+        rayProg.set("starColor", vec3(1));
+        rayProg.set("holeColor", vec3(0));
     }
 
     void render() {
@@ -211,15 +234,50 @@ public:
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         auto [w, h] = base->window.size();
-        ivec2 size(w, h);
+        ivec2 extent(w, h);
 
-        if (texSize != size) {
+        if (texSize != extent) {
             tex = Texture(w, h);
-            texSize = size;
+            texSize = extent;
         }
 
         glUseProgram(rayProg);
         tex.bindAsImage(0);
+
+        rayProg.set("pos", base->camera.pos);
+        rayProg.set("extent", extent);
+
+        mat4 mv = base->camera.view(), proj = base->camera.proj(w, h);
+        vec4 viewport(0, 0, w, h);
+
+        vec3 rayLD = unProject(vec3(0, 0, -1), mv, proj, viewport);
+        rayProg.set("rayLD", rayLD);
+
+        vec3 rayLU = unProject(vec3(0, h, -1), mv, proj, viewport);
+        rayProg.set("rayLU", rayLU);
+
+        vec3 rayRU = unProject(vec3(w, h, -1), mv, proj, viewport);
+        rayProg.set("rayRU", rayRU);
+
+        vec3 rayRD = unProject(vec3(w, 0, -1), mv, proj, viewport);
+        rayProg.set("rayRD", rayRD);
+
+         vector<vec4> bodies;
+
+        int nstars = scene->stars.size();
+        rayProg.set("nstars", nstars);
+        for (auto& star: scene->stars) {
+            bodies.emplace_back(star.pos.x, star.pos.y, star.pos.z, star.r);
+        }
+
+        int nholes = scene->holes.size();
+        rayProg.set("nholes", nholes);
+        for (auto& hole: scene->holes) {
+            bodies.emplace_back(hole.pos.x, hole.pos.y, hole.pos.z, hole.r);
+        }
+
+        bodiesBuffer.load(bodies.data(), bodies.size() * sizeof(vec4));
+        bodiesBuffer.bind(1);
 
         glDispatchCompute(w, h, 1);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
@@ -237,18 +295,22 @@ int main() {
 
     scene.holes = {};
     scene.stars = {};
-    for (int i = -3; i <= 3; ++i) {
-        for (int j = -3; j <= 3; ++j) {
-            for (int k = -3; k <= 3; ++k) {
-                if (i != 0 || j != 0 || k != 0) {
-                    Scene::Body body = {};
-                    body.pos = { 10 * i, 10 * j, 10 * k };
-                    body.r = rand.uniform(0.5, 1.5);
-                    scene.stars.push_back(body);
-                }
-            }
-        }
-    }
+//    for (int i = -1; i <= 1; ++i) {
+//        for (int j = -1; j <= 1; ++j) {
+//            for (int k = -1; k <= 1; ++k) {
+//                if (i != 0 || j != 0 || k != 0) {
+//                    Scene::Body body = {};
+//                    body.pos = { 10 * i, 10 * j, 10 * k };
+//                    body.r = rand.uniform(0.5, 1.5);
+//                    scene.stars.push_back(body);
+//                }
+//            }
+//        }
+//    }
+    Scene::Body body = {};
+    body.pos = vec3(0);
+    body.r = 0.1;
+    scene.stars.push_back(body);
 
     NormalMode normal(&base, &scene);
     RaytracerMode raytracer(&base, &scene);
