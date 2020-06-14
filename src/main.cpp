@@ -12,6 +12,7 @@
 #include "random.h"
 #include "texture.h"
 #include "storage_buffer.h"
+#include "gravity.h"
 
 using namespace std;
 using namespace glm;
@@ -201,9 +202,39 @@ private:
 
     Shader quadVs, quadFs, rayComp;
     Program quadProg, rayProg;
-    StorageBuffer bodiesBuffer;
+    StorageBuffer bodiesBuf, lowerPartBuf, upperPartBuf;
 
     vec3 bgColor;
+
+    void loadDefl() {
+        float lowCutoff = 2.6;
+        float midCutoff = 3;
+        float highCutoff = 10;
+        int lowerRes = 500;
+        int upperRes = 1000;
+
+        rayProg.set("lowCutoff", lowCutoff);
+        rayProg.set("lowerRes", lowerRes);
+        rayProg.set("midCutoff", midCutoff);
+        rayProg.set("upperRes", upperRes);
+        rayProg.set("highCutoff", highCutoff);
+
+        vector<float> lowerPart;
+        for (int i = 0; i < lowerRes; ++i) {
+            float b = lowCutoff + (float)i * (midCutoff - lowCutoff) / (float)lowerRes;
+            lowerPart.push_back(grav::defl(grav::Rapprox(b)));
+        }
+        lowerPartBuf.load(lowerPart.data(), lowerPart.size() * sizeof(float));
+        lowerPartBuf.bind(2);
+
+        vector<float> upperPart;
+        for (int i = 0; i < upperRes; ++i) {
+            float b = midCutoff + (float)i * (highCutoff - midCutoff) / (float)upperRes;
+            upperPart.push_back(grav::defl(grav::Rapprox(b)));
+        }
+        upperPartBuf.load(upperPart.data(), upperPart.size() * sizeof(float));
+        upperPartBuf.bind(3);
+    }
 
 public:
     RaytracerMode(Base *base, Scene *scene) {
@@ -227,6 +258,7 @@ public:
         rayProg.set("bgColor", bgColor);
         rayProg.set("starColor", vec3(1));
         rayProg.set("holeColor", vec3(0));
+        loadDefl();
     }
 
     void render() {
@@ -276,10 +308,10 @@ public:
             bodies.emplace_back(hole.pos.x, hole.pos.y, hole.pos.z, hole.r);
         }
 
-        bodiesBuffer.load(bodies.data(), bodies.size() * sizeof(vec4));
-        bodiesBuffer.bind(1);
+        bodiesBuf.load(bodies.data(), bodies.size() * sizeof(vec4));
+        bodiesBuf.bind(1);
 
-        glDispatchCompute(w, h, 1);
+        glDispatchCompute(w / 8 + 1, h / 8 + 1, 1);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
         glUseProgram(quadProg);
@@ -295,22 +327,27 @@ int main() {
 
     scene.holes = {};
     scene.stars = {};
-//    for (int i = -1; i <= 1; ++i) {
-//        for (int j = -1; j <= 1; ++j) {
-//            for (int k = -1; k <= 1; ++k) {
-//                if (i != 0 || j != 0 || k != 0) {
-//                    Scene::Body body = {};
-//                    body.pos = { 10 * i, 10 * j, 10 * k };
-//                    body.r = rand.uniform(0.5, 1.5);
-//                    scene.stars.push_back(body);
-//                }
-//            }
-//        }
-//    }
+    for (int i = -1; i <= 1; ++i) {
+        for (int j = -1; j <= 1; ++j) {
+            for (int k = -1; k <= 1; ++k) {
+                if (i != 0 || j != 0 || k != 0) {
+                    Scene::Body body = {};
+                    body.pos = { 10 * i, 10 * j, 10 * k };
+                    body.r = rand.uniform(0.5, 1.5);
+                    scene.stars.push_back(body);
+                }
+            }
+        }
+    }
+
     Scene::Body body = {};
-    body.pos = vec3(0);
-    body.r = 0.1;
-    scene.stars.push_back(body);
+    body.pos = { 0, 0, -100 };
+    body.r = 0.5;
+    scene.holes.push_back(body);
+
+//    body.pos = {0, 0, -10 };
+//    body.r = 1;
+//    scene.stars.push_back(body);
 
     NormalMode normal(&base, &scene);
     RaytracerMode raytracer(&base, &scene);

@@ -30,7 +30,7 @@ public:
         front = vec3(0, 0, -1);
         worldUp = up = vec3(0, 1, 0);
 
-        speed = 2.5;
+        speed = 10;
         yaw = -90;
         pitch = 0;
         sensitivity = 0.1;

@@ -75,6 +75,10 @@ public:
         glUniform4fv(retrieveLoc(var), 1, value_ptr(val));
     }
 
+    void set(const char *var, float const& val) {
+        glUniform1f(retrieveLoc(var), val);
+    }
+
     Program(const Program&) = delete;
     Program& operator=(const Program&) = delete;
 

@@ -1,5 +1,7 @@
 #version 460 core
-layout (local_size_x = 1, local_size_y = 1) in;
+#define PI 3.1415926538
+
+layout (local_size_x = 8, local_size_y = 8) in;
 layout (rgba32f, binding = 0) uniform image2D texOut;
 
 uniform vec3 pos;
@@ -15,29 +17,104 @@ layout (std430, binding = 1) buffer Bodies {
     vec4 bodies[];
 };
 
+float Rapx(float b) {
+    b *= 2;
+    float R = 3.01;
+    float priorR = 0;
+    float f, df;
+
+    for (int iter = 0; abs(R - priorR) >= 1e-5 && iter < 15; ++iter) {
+        priorR = R;
+        f = (pow(R, 3) / (R - 2)) - pow(b, 2);
+        df = (2 * (R - 3) * pow(R, 2)) / pow(R - 2, 2);
+        R -= f / df;
+    }
+
+    R /= 2;
+    return R;
+}
+
+float deflNear(float R) {
+    R *= 2;
+    float b = sqrt(pow(R, 3) / (R - 2));
+    return log(b / (3 * sqrt(3)) - 1) - 0.40023;
+}
+
+float deflFar(float R) {
+    return 2 / R;
+}
+
+uniform float lowCutoff;
+uniform int lowerRes;
+layout (std430, binding = 2) buffer LowerPart {
+    float lowerPart[];
+};
+uniform float midCutoff;
+uniform int upperRes;
+layout (std430, binding = 3) buffer UpperPart {
+    float upperPart[];
+};
+uniform float highCutoff;
+
+float defl(float b) {
+    if (b < lowCutoff) {
+        float R = Rapx(b);
+        return deflNear(R);
+    }
+    else if (b < midCutoff) {
+        int idx = int(ceil(float(lowerRes) * (b - lowCutoff) / (midCutoff - lowCutoff)));
+        if (idx < 0) idx = 0;
+        if (idx >= lowerRes) idx = lowerRes - 1;
+        return lowerPart[idx];
+    }
+    else if (b < highCutoff) {
+        int idx = int(ceil(float(upperRes) * (b - midCutoff) / (highCutoff - midCutoff)));
+        if (idx < 0) idx = 0;
+        if (idx >= upperRes) idx = upperRes - 1;
+        return upperPart[idx];
+    }
+    else {
+        float R = Rapx(b);
+        return deflFar(R);
+    }
+}
+
 float intersection(vec3 c, vec3 r, float R) {
     float d = dot(r, c);
     float del = d * d - dot(c, c) + R * R;
-    if (del < 0) return -1;
+    if (del < 0) {
+        return -1;
+    }
 
     float best = -1;
     float del_sqrt = sqrt(del);
 
     float lam = d - del_sqrt;
-    if (lam >= 0 && (best < 0 || lam < best)) {
+    if (lam > 0 && (best < 0 || lam < best)) {
         best = lam;
     }
 
     lam = d + del_sqrt;
-    if (lam >= 0 && (best < 0 || lam < best)) {
+    if (lam > 0 && (best < 0 || lam < best)) {
         best = lam;
     }
 
     return best;
 }
 
+float minDist(vec3 c, vec3 r) {
+    return length(r * dot(r, c) - c);
+}
+
+vec3 rotate(vec3 v, vec3 k, float theta) {
+    return v * cos(theta) + cross(k, v) * sin(theta) + k * dot(k, v) * (1 - cos(theta));
+}
+
 void main() {
     ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    if (pix.x >= extent.x || pix.y >= extent.y) {
+        return;
+    }
 
     float x = float(pix.x) / float(extent.x);
     float y = float(pix.y) / float(extent.y);
@@ -48,18 +125,53 @@ void main() {
 
     float best = -1;
     vec3 color = bgColor;
-    for (int i = 0; i < nstars; ++i) {
-        float lam = intersection(bodies[i].xyz - p, r, bodies[i].w);
-        if (lam >= 0 && (best < 0 || lam < best)) {
-            best = lam;
-            color = starColor;
+    vec3 c;
+    float R;
+    int hit;
+
+    for (int iter = 0; iter < 10; ++iter) {
+        hit = 0;
+
+        for (int i = 0; i < nstars; ++i) {
+            float lam = intersection(bodies[i].xyz - p, r, bodies[i].w);
+            if (lam > 0 && (best < 0 || lam < best)) {
+                best = lam;
+                hit = 1;
+            }
         }
-    }
-    for (int i = nstars; i < nstars + nholes; ++i) {
-        float lam = intersection(bodies[i].xyz - p, r, bodies[i].w);
-        if (lam >= 0 && (best < 0 || lam < best)) {
-            best = lam;
-            color = holeColor;
+
+        for (int i = nstars; i < nstars + nholes; ++i) {
+            float lam = intersection(bodies[i].xyz - p, r, 20 * bodies[i].w);
+            if (lam > 0 && (best < 0 || lam < best)) {
+                best = lam;
+                c = bodies[i].xyz;
+                R = bodies[i].w;
+                hit = 2;
+            }
+        }
+
+        if (hit == 1) {
+            color = starColor;
+            break;
+        }
+        else if (hit == 2) {
+            p += best * r;
+            float b = minDist(c - p, r) / R;
+
+            if (b < 1.5 * sqrt(3)) {
+                color = holeColor;
+                break;
+            }
+            else {
+                float theta = defl(b);
+                float psi = acos(dot(r, c - p) / length(c - p));
+                float phi = PI + theta - 2 * psi;
+
+                vec3 k = normalize(cross(r, c - p));
+                r = normalize(rotate(r, k, theta));
+                p = c + rotate(p - c, k, phi);
+                p += 0.01 * r;
+            }
         }
     }
 

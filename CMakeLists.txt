@@ -36,7 +36,8 @@ target_sources(lens
     src/model.h
     src/random.h
     src/texture.h
-    src/storage_buffer.h)
+    src/storage_buffer.h
+    src/gravity.h)
 
 target_link_libraries(lens
     PUBLIC
@@ -48,3 +49,5 @@ set_target_properties(lens
     LANGUAGE CXX)
 
 file(COPY res/ DESTINATION res/)
+
+add_executable(defl test/defl.cpp)
