@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(lens)
+project(lens LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -10,12 +10,32 @@ add_subdirectory(glfw)
 add_subdirectory(glad)
 add_subdirectory(glm)
 
-add_executable(lens src/main.cpp)
+add_library(obj INTERFACE)
+target_include_directories(obj
+    INTERFACE
+    OBJ-Loader/Source)
+
+add_executable(lens)
+target_sources(lens
+    PRIVATE
+    src/main.cpp
+    src/window.h
+    src/shader.h
+    src/program.h
+    src/vao.h
+    src/buffer.h
+    src/camera.h
+    src/model.h
+    src/random.h
+    src/texture.h)
+
 target_link_libraries(lens
     PUBLIC
-    glfw
-    glad
-    glm)
+    glfw glad glm obj)
 
-configure_file(shader.vert shader.vert COPYONLY)
-configure_file(shader.frag shader.frag COPYONLY)
+set_target_properties(lens
+    PROPERTIES
+    LINKER_LANGUAGE CXX
+    LANGUAGE CXX)
+
+file(COPY res/ DESTINATION res/)

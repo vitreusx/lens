@@ -6,4 +6,9 @@ target_include_directories(glad
 
 target_sources(glad
     PRIVATE
-    src/glad.c)
+    src/glad.cpp)
+
+set_target_properties(glad
+    PROPERTIES
+    LINKER_LANGUAGE CXX
+    LANGUAGE CXX)

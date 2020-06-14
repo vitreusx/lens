@@ -1,14 +1,18 @@
 #pragma once
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
+#include <tuple>
+using namespace std;
 
 class Window {
-    private:
+private:
     GLFWwindow *window;
 
     static void resetViewport(GLFWwindow*, int w, int h) {
         glViewport(0, 0, w, h);
     }
 
-    public:
+public:
     Window() {
         glfwInit();
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -20,6 +24,8 @@ class Window {
         glfwSetFramebufferSizeCallback(window, resetViewport);
 
         gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+
+        glEnable(GL_DEPTH_TEST);
     }
 
     ~Window() {
@@ -28,5 +34,11 @@ class Window {
 
     operator GLFWwindow*() {
         return window;
+    }
+
+    pair<int, int> size() {
+        pair<int, int> rv;
+        glfwGetWindowSize(window, &rv.first, &rv.second);
+        return rv;
     }
 };

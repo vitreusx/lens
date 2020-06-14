@@ -1,1 +1,0 @@
-/usr/bin/c++  -g   CMakeFiles/lens.dir/src/main.cpp.o  -o lens  glfw/src/libglfw3.a glad/libglad.a -lpthread /usr/lib/librt.so -lm -ldl 

@@ -1,400 +1,266 @@
 #include <glad/glad.h>
-#include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
 #include <vector>
-#include <string>
-#include <stdexcept>
-#include <fstream>
-#include <unordered_map>
+#include "window.h"
+#include "shader.h"
+#include "program.h"
+#include "vao.h"
+#include "buffer.h"
+#include "camera.h"
+#include "model.h"
+#include "random.h"
+#include "texture.h"
 
 using namespace std;
 using namespace glm;
 
-class Window {
-private:
-    GLFWwindow *window;
-
-    static void resetViewport(GLFWwindow*, int w, int h) {
-        glViewport(0, 0, w, h);
-    }
-
+class Base {
 public:
-    Window() {
-        glfwInit();
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-
-        window = glfwCreateWindow(800, 600, "lens", nullptr, nullptr);
-        glfwMakeContextCurrent(window);
-        glfwSetFramebufferSizeCallback(window, resetViewport);
-
-        gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
-
-        glEnable(GL_DEPTH_TEST);
-    }
-
-    ~Window() {
-        glfwTerminate();
-    }
-
-    operator GLFWwindow*() {
-        return window;
-    }
-
-    pair<int, int> size() {
-        pair<int, int> rv;
-        glfwGetWindowSize(window, &rv.first, &rv.second);
-        return rv;
-    }
-};
-
-class Shader {
-private:
-    GLuint shader = 0;
-
-public:
-    Shader() = default;
-
-    Shader(const char *source, int type) {
-        shader = glCreateShader(type);
-        glShaderSource(shader, 1, &source, nullptr);
-
-        glCompileShader(shader);
-        GLint rv;
-        glGetShaderiv(shader, GL_COMPILE_STATUS, &rv);
-
-        if (!rv) {
-            GLint len;
-            glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &len);
-
-            string log;
-            log.resize(len);
-            glGetShaderInfoLog(shader, len, nullptr, log.data());
-
-            throw runtime_error(log);
-        }
-    }
-
-    ~Shader() {
-        glDeleteShader(shader);
-    }
-
-    operator GLuint&() {
-        return shader;
-    }
-};
-
-class Program {
-private:
-    GLuint program = 0;
-    unordered_map<string, GLint> locs = {};
-
-public:
-    Program() = default;
-
-    explicit Program(const vector<GLuint>& shaders) {
-        program = glCreateProgram();
-        locs = {};
-
-        for (const auto& shader: shaders)
-            glAttachShader(program, shader);
-
-        glLinkProgram(program);
-        for (const auto& shader: shaders)
-            glDetachShader(program, shader);
-
-        GLint rv;
-        glGetProgramiv(program, GL_LINK_STATUS, &rv);
-        if (!rv) {
-            GLint len;
-            glGetProgramiv(program, GL_INFO_LOG_LENGTH, &len);
-
-            string log;
-            log.resize(len);
-            glGetProgramInfoLog(program, len, nullptr, log.data());
-
-            throw runtime_error(log);
-        }
-    }
-
-    void set(const char* var, mat4 const& val) {
-        GLint loc = 0;
-        decltype(locs)::iterator it;
-        if ((it = locs.find((string)var)) != locs.end()) {
-            loc = it->second;
-        }
-        else {
-            loc = glGetUniformLocation(program, var);
-            locs[var] = loc;
-        }
-
-        glUniformMatrix4fv(loc, 1, GL_FALSE, value_ptr(val));
-    }
-
-    ~Program() {
-        glDeleteProgram(program);
-    }
-
-    operator GLuint&() {
-        return program;
-    }
-};
-
-string contents(const char *filename) {
-    ifstream ifs(filename);
-    string rv;
-
-    ifs.seekg(0, ios::end);
-    auto nbytes = ifs.tellg();
-    rv.reserve(nbytes);
-    ifs.seekg(0, ios::beg);
-
-    ifs.read(rv.data(), nbytes);
-    return rv;
-}
-
-class VAO {
-private:
-    GLuint vao = 0;
-
-public:
-    VAO() {
-        glGenVertexArrays(1, &vao);
-    }
-
-    ~VAO() {
-        glDeleteVertexArrays(1, &vao);
-    }
-
-    operator GLuint&() {
-        return vao;
-    }
-};
-
-class Buffer {
-private:
-    GLuint buffer = 0;
-
-public:
-    Buffer() {
-        glGenBuffers(1, &buffer);
-    }
-
-    ~Buffer() {
-        glDeleteBuffers(1, &buffer);
-    }
-
-    operator GLuint&() {
-        return buffer;
-    }
-};
-
-struct Vertex {
-    float r[3], c[3];
-
-    static void attr() {
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-            sizeof(Vertex), (void*)offsetof(Vertex, r));
-        glEnableVertexAttribArray(0);
-
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE,
-            sizeof(Vertex), (void*)offsetof(Vertex, c));
-        glEnableVertexAttribArray(1);
-    }
-};
-
-enum Movement {
-    Forward, Backward, Left, Right, Up, Down
-};
-
-class Camera {
-private:
-    vec3 pos, front, up, right, worldUp;
-    float yaw, pitch, speed, sensitivity, zoom;
-
-    void update() {
-        vec3 f;
-        f.x = cos(radians(yaw)) * cos(radians(pitch));
-        f.y = sin(radians(pitch));
-        f.z = sin(radians(yaw)) * cos(radians(pitch));
-
-        front = normalize(f);
-        right = normalize(cross(front, worldUp));
-        up = normalize(cross(right, front));
-    }
-
-public:
-    Camera() {
-        pos = vec3(0, 0, 0);
-        front = vec3(0, 0, -1);
-        worldUp = up = vec3(0, 1, 0);
-
-        speed = 2.5;
-        yaw = -90;
-        pitch = 0;
-        sensitivity = 0.1;
-        zoom = 45;
-
-        update();
-    }
-
-    mat4 proj(int w, int h) const {
-        return perspective(radians(zoom), (float)w / (float)h, 0.1f, 100.0f);
-    }
-
-    mat4 view() const {
-        return lookAt(pos, pos + front, up);
-    }
-
-    void onKeyPress(Movement mvmt, float dt) {
-        auto dist = speed * dt;
-        switch (mvmt) {
-            case Forward: pos += front * dist; break;
-            case Backward: pos -= front * dist; break;
-            case Left: pos -= right * dist; break;
-            case Right: pos += right * dist; break;
-            case Up: pos += up * dist; break;
-            case Down: pos -= up * dist; break;
-        }
-
-        update();
-    }
-
-    void onMouseMove(float dx, float dy) {
-        yaw += dx * sensitivity;
-        pitch += dy * sensitivity;
-
-        if (pitch > 89) pitch = 89;
-        else if (pitch < -89) pitch = -89;
-
-        update();
-    }
-
-    void onMouseScroll(float dy) {
-        zoom -= dy;
-        if (zoom < 1) zoom = 1;
-        else if (zoom > 45) zoom = 45;
-
-        update();
-    }
-};
-
-class VBO {
-private:
-    GLuint vbo;
-};
-
-Camera camera;
-bool firstMouse = true;
-float priorX, priorY;
-
-int main() {
     Window window;
-    glViewport(0, 0, 800, 600);
 
-    Shader vs(contents("shader.vert").c_str(), GL_VERTEX_SHADER);
-    Shader fs(contents("shader.frag").c_str(), GL_FRAGMENT_SHADER);
-    Program program({ vs, fs });
+    Camera camera;
+    bool firstMouse = true;
+    float priorX, priorY, priorTime;
+    float dt;
+    bool which = true;
 
-    vector<Vertex> verts = {
-        {{0.5, 0.5, 0.0}, {1.0, 0.0, 0.0}},
-        {{0.5, -0.5, 0.0}, {0.0, 1.0, 0.0}},
-        {{-0.5, -0.5, 0.0}, {0.0, 0.0, 1.0}},
-        {{ -0.5, 0.5, 0.0}, { 1.0, 1.0, 1.0}}
-    };
-    vector<GLuint> indices = {
-        0, 1, 3,
-        1, 2, 3
-    };
+    static void onMouseMove(GLFWwindow *window, double x, double y) {
+        Base *self = (Base*)glfwGetWindowUserPointer(window);
 
-    VAO vao;
-    glBindVertexArray(vao);
-
-    Buffer vbo, ebo;
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint),
-        indices.data(), GL_STATIC_DRAW);
-
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex),
-        verts.data(), GL_STATIC_DRAW);
-
-    Vertex::attr();
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-    glUseProgram(program);
-
-    float priorT = 0, dt = 0;
-    vector<pair<int, Movement>> mvmts = {
-        { GLFW_KEY_W, Forward },
-        { GLFW_KEY_A, Left },
-        { GLFW_KEY_S, Backward },
-        { GLFW_KEY_D, Right },
-        { GLFW_KEY_LEFT_SHIFT, Down },
-        { GLFW_KEY_SPACE, Up }
-    };
-
-    float s = 10;
-    vector<pair<int, vec2>> scrolls = {
-        { GLFW_KEY_DOWN, vec2(0, -s) },
-        { GLFW_KEY_UP, vec2(0, s) },
-        { GLFW_KEY_LEFT, vec2(-s, 0) },
-        { GLFW_KEY_RIGHT, vec2(s, 0) }
-    };
-
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-
-    glfwSetCursorPosCallback(window, [](GLFWwindow*, double x, double y) -> void {
-        if (firstMouse) {
-            priorX = (float)x;
-            priorY = (float)y;
-            firstMouse = false;
+        if (self->firstMouse) {
+            self->priorX = (float)x;
+            self->priorY = (float)y;
+            self->firstMouse = false;
         }
 
-        float dx = (float)x - priorX, dy = (float)y - priorY;
-        priorX = (float)x;
-        priorY = (float)y;
+        float dx = (float)x - self->priorX, dy = (float)y - self->priorY;
+        self->priorX = (float)x;
+        self->priorY = (float)y;
 
-        camera.onMouseMove(dx, -dy);
-    });
+        self->camera.onMouseMove(dx, -dy);
+    }
 
-    glfwSetScrollCallback(window, [](GLFWwindow*, double dx, double dy) -> void {
-        camera.onMouseScroll((float)dy);
-    });
+    static void onMouseScroll(GLFWwindow *window, double dx, double dy) {
+        Base *self = (Base*)glfwGetWindowUserPointer(window);
+        self->camera.onMouseScroll((float)dy);
+    }
 
-    while (!glfwWindowShouldClose(window)) {
-        auto current = (float)glfwGetTime();
-        dt = current - priorT;
-        priorT = current;
+    static void onKeyPress(GLFWwindow *window, int key, int, int action, int) {
+        Base *self = (Base*)glfwGetWindowUserPointer(window);
+
+        if (key == GLFW_KEY_RIGHT_CONTROL && action == GLFW_PRESS)
+            self->which = !self->which;
+    }
+
+    void onInput() {
+        static const vector<pair<int, Movement>> mvmts = {
+            { GLFW_KEY_W, Forward },
+            { GLFW_KEY_A, Left },
+            { GLFW_KEY_S, Backward },
+            { GLFW_KEY_D, Right },
+            { GLFW_KEY_LEFT_SHIFT, Down },
+            { GLFW_KEY_SPACE, Up }
+        };
+
+        float s = 10;
+        static const vector<pair<int, vec2>> scrolls = {
+            { GLFW_KEY_DOWN, vec2(0, -s) },
+            { GLFW_KEY_UP, vec2(0, s) },
+            { GLFW_KEY_LEFT, vec2(-s, 0) },
+            { GLFW_KEY_RIGHT, vec2(s, 0) }
+        };
 
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(window, true);
 
+        s = (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS) ? 5 : 1;
+
         for (auto const& [key, mvmt]: mvmts) {
             if (glfwGetKey(window, key) == GLFW_PRESS)
-                camera.onKeyPress(mvmt, dt);
+                camera.onKeyPress(mvmt, s * dt);
         }
 
         for (auto const& [key, dv]: scrolls) {
             if (glfwGetKey(window, key) == GLFW_PRESS)
-                camera.onMouseMove(dv.x, dv.y);
+                camera.onMouseMove(s * dv.x, s * dv.y);
         }
+    }
 
-        program.set("model", mat4(1));
-        program.set("view", camera.view());
-        auto [w, h] = window.size();
-        program.set("proj", camera.proj(w, h));
+    void updateTime() {
+        auto current = (float)glfwGetTime();
+        dt = current - priorTime;
+        priorTime = current;
+    }
 
-        glClearColor(0.1, 0.1, 0.1, 1.0);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, nullptr);
-
+    void refresh() {
         glfwSwapBuffers(window);
         glfwPollEvents();
+    }
+
+    Base() {
+        glfwSetWindowUserPointer(window, this);
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+        glfwSetCursorPosCallback(window, onMouseMove);
+        glfwSetScrollCallback(window, onMouseScroll);
+        glfwSetKeyCallback(window, onKeyPress);
+    }
+};
+
+class Scene {
+public:
+    struct Body {
+        vec3 pos;
+        float r;
+    };
+
+    vector<Body> holes, stars;
+};
+
+class NormalMode {
+private:
+    Base *base;
+    Scene *scene;
+    vec3 holeColor, starColor, bgColor;
+
+    Shader vs, fs;
+    Program program;
+    Model sphere;
+
+public:
+    NormalMode(Base *base, Scene *scene) {
+        this->base = base;
+        this->scene = scene;
+        vs = Shader("res/normal.vert", GL_VERTEX_SHADER);
+        fs = Shader("res/normal.frag", GL_FRAGMENT_SHADER);
+        program = Program({vs, fs});
+
+        sphere = Model("res/sphere.obj");
+
+        holeColor = vec3(0);
+        starColor = vec3(1);
+        bgColor = vec3(0.1);
+    }
+
+    void render() {
+        glUseProgram(program);
+
+        program.set("view", base->camera.view());
+        auto [w, h] = base->window.size();
+        program.set("proj", base->camera.proj(w, h));
+
+        glClearColor(bgColor.r, bgColor.g, bgColor.b, 1.0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        auto renderAll = [&](vector<Scene::Body> const& bodies) -> void {
+            for (auto const& [pos, r]: bodies) {
+                auto model = mat4(1);
+                model = translate(model, pos);
+                model = scale(model, vec3(r));
+                program.set("model", model);
+                sphere.render();
+            }
+        };
+
+        program.set("color", holeColor);
+        renderAll(scene->holes);
+
+        program.set("color", starColor);
+        renderAll(scene->stars);
+    }
+};
+
+class RaytracerMode {
+private:
+    Base *base;
+    Scene *scene;
+
+    Texture tex;
+    ivec2 texSize;
+
+    Model quad;
+
+    Shader quadVs, quadFs, rayComp;
+    Program quadProg, rayProg;
+
+    vec3 bgColor;
+
+public:
+    RaytracerMode(Base *base, Scene *scene) {
+        this->base = base;
+        this->scene = scene;
+
+        quadVs = Shader("res/quad.vert", GL_VERTEX_SHADER);
+        quadFs = Shader("res/quad.frag", GL_FRAGMENT_SHADER);
+        quadProg = Program({quadVs, quadFs});
+
+        glUseProgram(quadProg);
+        quadProg.set("rayTex", 0);
+
+        rayComp = Shader("res/raytracer.comp", GL_COMPUTE_SHADER);
+        rayProg = Program({rayComp});
+
+        quad = Model("res/quad.obj");
+
+        bgColor = vec3(0.1);
+    }
+
+    void render() {
+        glClearColor(bgColor.r, bgColor.g, bgColor.b, 1.0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        auto [w, h] = base->window.size();
+        ivec2 size(w, h);
+
+        if (texSize != size) {
+            tex = Texture(w, h);
+            texSize = size;
+        }
+
+        glUseProgram(rayProg);
+        tex.bindAsImage(0);
+
+        glDispatchCompute(w, h, 1);
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+        glUseProgram(quadProg);
+        tex.bindAsTex(0);
+        quad.render();
+    }
+};
+
+int main() {
+    Base base;
+    Scene scene;
+    Random rand;
+
+    scene.holes = {};
+    scene.stars = {};
+    for (int i = -3; i <= 3; ++i) {
+        for (int j = -3; j <= 3; ++j) {
+            for (int k = -3; k <= 3; ++k) {
+                if (i != 0 || j != 0 || k != 0) {
+                    Scene::Body body = {};
+                    body.pos = { 10 * i, 10 * j, 10 * k };
+                    body.r = rand.uniform(0.5, 1.5);
+                    scene.stars.push_back(body);
+                }
+            }
+        }
+    }
+
+    NormalMode normal(&base, &scene);
+    RaytracerMode raytracer(&base, &scene);
+
+    while (!glfwWindowShouldClose(base.window)) {
+        base.updateTime();
+        base.onInput();
+
+        if (base.which) normal.render();
+        else raytracer.render();
+
+        base.refresh();
     }
 
     return 0;
