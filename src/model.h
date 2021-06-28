@@ -3,6 +3,8 @@
 #include <glm/glm.hpp>
 #include <OBJ_Loader.h>
 #include <stdexcept>
+#include "vao.h"
+#include "buffer.h"
 using namespace objl;
 using namespace std;
 
@@ -38,6 +40,10 @@ public:
         auto& vertices = mesh.Vertices;
         auto& faces = mesh.Indices;
 
+        load(vertices, faces);
+    }
+
+    void load(vector<Vertex> const& verts, vector<unsigned int> const& faces) {
         glBindVertexArray(vao);
 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, idxBuf);
@@ -45,8 +51,8 @@ public:
                      faces.data(), GL_STATIC_DRAW);
 
         glBindBuffer(GL_ARRAY_BUFFER, vertBuf);
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex),
-                     vertices.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(Vertex),
+                     verts.data(), GL_STATIC_DRAW);
 
         attr();
         glBindBuffer(GL_ARRAY_BUFFER, 0);

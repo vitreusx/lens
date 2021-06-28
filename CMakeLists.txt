@@ -37,11 +37,16 @@ target_sources(lens
     src/random.h
     src/texture.h
     src/storage_buffer.h
-    src/gravity.h)
+    src/rayapx.h
+    src/ray.h
+    src/scene.h)
 
 target_link_libraries(lens
     PUBLIC
     glfw glad glm obj stb)
+target_include_directories(lens
+    PUBLIC
+    eigen)
 
 set_target_properties(lens
     PROPERTIES
@@ -51,3 +56,6 @@ set_target_properties(lens
 file(COPY res/ DESTINATION res/)
 
 add_executable(defl test/defl.cpp)
+target_include_directories(defl
+    PUBLIC
+    eigen)

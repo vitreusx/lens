@@ -12,7 +12,9 @@
 #include "random.h"
 #include "texture.h"
 #include "storage_buffer.h"
-#include "gravity.h"
+#include "rayapx.h"
+#include "ray.h"
+#include "scene.h"
 
 using namespace std;
 using namespace glm;
@@ -20,12 +22,15 @@ using namespace glm;
 class Base {
 public:
     Window window;
+    Scene scene;
 
     Camera camera;
     bool firstMouse = true;
     float priorX, priorY, priorTime;
     float dt;
-    bool which = true, cursor = false;
+    bool which = true, cursor = false, zone = false;
+
+    bool createRay = false;
 
     static void onMouseMove(GLFWwindow *window, double x, double y) {
         Base *self = (Base*)glfwGetWindowUserPointer(window);
@@ -54,8 +59,9 @@ public:
     static void onKeyPress(GLFWwindow *window, int key, int, int action, int) {
         Base *self = (Base*)glfwGetWindowUserPointer(window);
 
-        if (key == GLFW_KEY_F1 && action == GLFW_PRESS && !self->cursor)
+        if (key == GLFW_KEY_F1 && action == GLFW_PRESS && !self->cursor) {
             self->which = !self->which;
+        }
 
         if (key == GLFW_KEY_F2 && action == GLFW_PRESS) {
             self->cursor = !self->cursor;
@@ -66,6 +72,25 @@ public:
             else {
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
             }
+        }
+
+        if (key == GLFW_KEY_F3 && action == GLFW_PRESS) {
+            self->zone = !self->zone;
+        }
+    }
+
+    static void onMousePress(GLFWwindow *window, int button, int action, int) {
+        Base *self = (Base*)glfwGetWindowUserPointer(window);
+
+        if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+            auto& hole = self->scene.holes.front();
+            vector<vec3> stars;
+            for (const auto& star: self->scene.stars) {
+                stars.push_back(star.pos);
+            }
+
+            self->scene.rays.emplace_back(self->camera.pos, self->camera.front,
+                hole.pos, hole.r, 1000.0);
         }
     }
 
@@ -124,41 +149,30 @@ public:
         glfwSetCursorPosCallback(window, onMouseMove);
         glfwSetScrollCallback(window, onMouseScroll);
         glfwSetKeyCallback(window, onKeyPress);
+        glfwSetMouseButtonCallback(window, onMousePress);
     }
-};
-
-class Scene {
-public:
-    struct Body {
-        vec3 pos;
-        float r;
-    };
-
-    vector<Body> holes, stars;
 };
 
 class NormalMode {
 private:
     Base *base;
     Scene *scene;
-    vec3 holeColor, starColor, bgColor;
+    vec3 bgColor;
 
     Shader vs, fs;
     Program program;
     Model sphere;
 
 public:
-    NormalMode(Base *base, Scene *scene) {
+    explicit NormalMode(Base *base) {
         this->base = base;
-        this->scene = scene;
+        this->scene = &base->scene;
         vs = Shader("res/normal.vert", GL_VERTEX_SHADER);
         fs = Shader("res/normal.frag", GL_FRAGMENT_SHADER);
         program = Program({vs, fs});
 
         sphere = Model("res/sphere.obj");
 
-        holeColor = vec3(0);
-        starColor = vec3(1);
         bgColor = vec3(0.1);
     }
 
@@ -173,20 +187,24 @@ public:
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         auto renderAll = [&](vector<Scene::Body> const& bodies) -> void {
-            for (auto const& [pos, r]: bodies) {
+            for (auto const& [pos, color, r]: bodies) {
                 auto model = mat4(1);
                 model = translate(model, pos);
                 model = scale(model, vec3(r));
                 program.set("model", model);
+                program.set("color", color);
                 sphere.render();
             }
         };
 
-        program.set("color", holeColor);
         renderAll(scene->holes);
-
-        program.set("color", starColor);
         renderAll(scene->stars);
+
+        for (auto& ray: scene->rays) {
+            program.set("model", mat4(1));
+            program.set("color", vec4(1, 1, 1, 1));
+            ray.render();
+        }
     }
 };
 
@@ -202,7 +220,7 @@ private:
 
     Shader quadVs, quadFs, rayComp;
     Program quadProg, rayProg;
-    StorageBuffer bodiesBuf, lowerPartBuf, upperPartBuf;
+    StorageBuffer bodiesBuf, lowerPartBuf, upperPartBuf, colorBuf;
 
     vec3 bgColor;
 
@@ -237,9 +255,9 @@ private:
     }
 
 public:
-    RaytracerMode(Base *base, Scene *scene) {
+    explicit RaytracerMode(Base *base) {
         this->base = base;
-        this->scene = scene;
+        this->scene = &base->scene;
 
         quadVs = Shader("res/quad.vert", GL_VERTEX_SHADER);
         quadFs = Shader("res/quad.frag", GL_FRAGMENT_SHADER);
@@ -256,8 +274,6 @@ public:
         bgColor = vec3(0.1);
         glUseProgram(rayProg);
         rayProg.set("bgColor", bgColor);
-        rayProg.set("starColor", vec3(1));
-        rayProg.set("holeColor", vec3(0));
         loadDefl();
     }
 
@@ -278,6 +294,7 @@ public:
 
         rayProg.set("pos", base->camera.pos);
         rayProg.set("extent", extent);
+        rayProg.set("zone", (int)base->zone);
 
         mat4 mv = base->camera.view(), proj = base->camera.proj(w, h);
         vec4 viewport(0, 0, w, h);
@@ -294,22 +311,18 @@ public:
         vec3 rayRD = unProject(vec3(w, 0, -1), mv, proj, viewport);
         rayProg.set("rayRD", rayRD);
 
-         vector<vec4> bodies;
-
         int nstars = scene->stars.size();
         rayProg.set("nstars", nstars);
-        for (auto& star: scene->stars) {
-            bodies.emplace_back(star.pos.x, star.pos.y, star.pos.z, star.r);
-        }
 
         int nholes = scene->holes.size();
         rayProg.set("nholes", nholes);
-        for (auto& hole: scene->holes) {
-            bodies.emplace_back(hole.pos.x, hole.pos.y, hole.pos.z, hole.r);
-        }
 
-        bodiesBuf.load(bodies.data(), bodies.size() * sizeof(vec4));
+        bodiesBuf.load(scene->buffer.data(), scene->buffer.size() * sizeof(vec4));
         bodiesBuf.bind(1);
+
+        colorBuf.load(scene->colorBuffer.data(), scene->colorBuffer.size() * sizeof
+        (vec4));
+        colorBuf.bind(4);
 
         glDispatchCompute(w / 8 + 1, h / 8 + 1, 1);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
@@ -322,35 +335,9 @@ public:
 
 int main() {
     Base base;
-    Scene scene;
-    Random rand;
 
-    scene.holes = {};
-    scene.stars = {};
-    for (int i = -1; i <= 1; ++i) {
-        for (int j = -1; j <= 1; ++j) {
-            for (int k = -1; k <= 1; ++k) {
-                if (i != 0 || j != 0 || k != 0) {
-                    Scene::Body body = {};
-                    body.pos = { 10 * i, 10 * j, 10 * k };
-                    body.r = rand.uniform(0.5, 1.5);
-                    scene.stars.push_back(body);
-                }
-            }
-        }
-    }
-
-    Scene::Body body = {};
-    body.pos = { 0, 0, -100 };
-    body.r = 0.5;
-    scene.holes.push_back(body);
-
-//    body.pos = {0, 0, -10 };
-//    body.r = 1;
-//    scene.stars.push_back(body);
-
-    NormalMode normal(&base, &scene);
-    RaytracerMode raytracer(&base, &scene);
+    NormalMode normal(&base);
+    RaytracerMode raytracer(&base);
 
     while (!glfwWindowShouldClose(base.window)) {
         base.updateTime();
